@@ -1,4 +1,5 @@
 import requests
+import json
 import logging
 import os
 from requests.auth import HTTPBasicAuth
@@ -15,8 +16,22 @@ ASSIGNED_ID = 4  # jessica
 # Kit article IDs — add new bundle SKUs here as needed
 KIT_ARTICLE_IDS = {8068}  # 810003239525 Veal Chop 14-16oz - 2 Pack
 
+PROCESSED_FILE = "processed_lines.json"
+
 auth = HTTPBasicAuth(API_KEY, API_SECRET)
 headers = {"Content-Type": "application/json"}
+
+
+def load_processed():
+    if os.path.exists(PROCESSED_FILE):
+        with open(PROCESSED_FILE) as f:
+            return set(json.load(f))
+    return set()
+
+
+def save_processed(processed):
+    with open(PROCESSED_FILE, "w") as f:
+        json.dump(sorted(list(processed)), f)
 
 
 def get_confirmed_unbooked_orders():
@@ -28,18 +43,6 @@ def get_confirmed_unbooked_orders():
     confirmed = [o for o in orders if o.get("status") == "30" and o.get("part_status") == "10"]
     log.info(f"Total orders: {len(orders)}, Confirmed+unbooked: {len(confirmed)}")
     return confirmed
-
-
-def get_existing_mo_article_ids(cust_ord_id):
-    """Return set of article_ids that already have an MO for this customer order."""
-    r = requests.get(f"{BASE_URL}/manufacturing-orders?cust_ord_id={cust_ord_id}", auth=auth, headers=headers)
-    if r.status_code not in (200, 206):
-        return set()
-    try:
-        mos = r.json()
-        return {mo.get("article_id") for mo in mos if mo.get("article_id")}
-    except Exception:
-        return set()
 
 
 def create_mo(article_id, quantity, cust_ord_id, line_id):
@@ -57,14 +60,14 @@ def create_mo(article_id, quantity, cust_ord_id, line_id):
 
 def run():
     log.info("Checking for unbooked confirmed kit orders...")
+    processed = load_processed()
+    log.info(f"Already processed line IDs: {processed}")
     orders = get_confirmed_unbooked_orders()
+    changed = False
 
     for order in orders:
         cust_ord_id = order["cust_ord_id"]
         code = order["code"]
-
-        # Get article_ids that already have MOs for this order
-        existing_article_ids = get_existing_mo_article_ids(cust_ord_id)
 
         for line in order.get("products", []):
             line_id = line["line_id"]
@@ -75,8 +78,9 @@ def run():
             if article_id not in KIT_ARTICLE_IDS:
                 continue
 
-            if article_id in existing_article_ids:
-                log.info(f"MO already exists for {code} - {item_title}, skipping")
+            key = str(line_id)
+            if key in processed:
+                log.info(f"Already processed {code} line {line_id} ({item_title}), skipping")
                 continue
 
             log.info(f"Creating MO for {code} - {item_title} (qty: {quantity})")
@@ -84,8 +88,14 @@ def run():
 
             if status == 201:
                 log.info(f"✅ MO {response.strip()} created for {code} - {item_title}")
+                processed.add(key)
+                changed = True
             else:
                 log.error(f"❌ Failed: {status} {response}")
+
+    if changed:
+        save_processed(processed)
+        log.info(f"Saved processed lines: {processed}")
 
     log.info("Done.")
 
