@@ -2,8 +2,8 @@ name: Auto-Create Kit Manufacturing Orders
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Every 5 minutes
-  workflow_dispatch:        # Also allows manual trigger from GitHub UI
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   create-kit-mos:
@@ -26,3 +26,11 @@ jobs:
           MRPEASY_API_KEY: ${{ secrets.MRPEASY_API_KEY }}
           MRPEASY_API_SECRET: ${{ secrets.MRPEASY_API_SECRET }}
         run: python create_kit_mos.py
+
+      - name: Commit processed lines back to repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add processed_lines.json || true
+          git diff --staged --quiet || git commit -m "Update processed lines"
+          git push
